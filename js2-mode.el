@@ -3928,6 +3928,7 @@ You can tell the quote type by looking at the first character."
                                                        type-params
                                                        super-type-params
                                                        impls
+                                                       decorators
                                                        parens-p)))
   "AST node for an class expression.
 `elems' is a list of `js2-object-prop-node', and `extends' is an
@@ -3938,6 +3939,7 @@ optional `js2-expr-node'"
   type-params      ; type params
   super-type-params; extends superclass type params
   impls            ; implements interfaces
+  decorators       ; decorators
   parens-p)        ; exnteds expr wrap a parens
 
 (js2--struct-put 'js2-class-node 'js2-visitor 'js2-visit-class-node)
@@ -3957,7 +3959,13 @@ optional `js2-expr-node'"
          (tp (js2-class-node-type-params n))
          (stp (js2-class-node-super-type-params n))
          (impls (js2-class-node-impls n))
+         (decorators (js2-class-node-decorators n))
          (parens-p (js2-class-node-parens-p n)))
+    ;; TODO(Rabbit): decorators should be a list
+    (when decorators
+      (insert "@")
+      (js2-print-ast decorators 0)
+      (insert " "))
     (insert pad "class")
     (when name
       (insert " ")
@@ -9560,6 +9568,7 @@ node are given relative start positions and correct lengths."
     (aset parsers js2-WITH      #'js2-parse-with)
     (aset parsers js2-YIELD     #'js2-parse-ret-yield)
     (aset parsers js2-INTERFACE #'js2-parse-interface)
+    (aset parsers js2-XMLATTR   #'js2-parse-decorators)
     parsers)
   "A vector mapping token types to parser functions.")
 
@@ -11970,7 +11979,7 @@ If ONLY-OF-P is non-nil, only the 'for (foo of bar)' form is allowed."
     (js2-node-add-children pn iter obj)
     pn))
 
-(defun js2-parse-class-stmt ()
+(defun js2-parse-class-stmt (&optional decorators)
   (let ((pos (js2-current-token-beg))
         (_ (js2-must-match-name "msg.unnamed.class.stmt"))
         (name (js2-create-name-node t))
@@ -11980,14 +11989,14 @@ If ONLY-OF-P is non-nil, only the 'for (foo of bar)' form is allowed."
     ;; parse type params after name, e.g. class a<T>
     (when (= (js2-peek-token) js2-LT)
         (setq type-params (js2-parse-type-params)))
-    (let ((node (js2-parse-class pos 'CLASS_STATEMENT name type-params)))
+    (let ((node (js2-parse-class pos 'CLASS_STATEMENT name type-params decorators)))
       (js2-record-imenu-functions node name)
       (js2-define-symbol js2-FUNCTION
                          (js2-name-node-name name)
                          node)
       node)))
 
-(defun js2-parse-class-expr ()
+(defun js2-parse-class-expr (&optional decorators)
   (let ((pos (js2-current-token-beg))
         name type-params)
     (when (js2-match-token js2-NAME)
@@ -11995,9 +12004,9 @@ If ONLY-OF-P is non-nil, only the 'for (foo of bar)' form is allowed."
     ;; parse type params after name, e.g. class a<T>, or no name class <T>
     (when (= (js2-peek-token) js2-LT)
         (setq type-params (js2-parse-type-params)))
-    (js2-parse-class pos 'CLASS_EXPRESSION name type-params)))
+    (js2-parse-class pos 'CLASS_EXPRESSION name type-params decorators)))
 
-(defun js2-parse-class (pos form name &optional type-params)
+(defun js2-parse-class (pos form name &optional type-params decorators)
   ;; class X [extends ...] {
   (let (pn elems extends
            super-type-params parens-p
@@ -12054,7 +12063,8 @@ If ONLY-OF-P is non-nil, only the 'for (foo of bar)' form is allowed."
                                   :type-params type-params
                                   :super-type-params super-type-params
                                   :parens-p parens-p
-                                  :impls (nreverse impls)))
+                                  :impls (nreverse impls)
+                                  :decorators decorators))
     (apply #'js2-node-add-children
            pn name extends (js2-class-node-elems pn))
     pn))
@@ -13161,6 +13171,27 @@ TODO: reimplement this parser."
                            :len (- (js2-current-token-end) pos)
                            :decls node
                            :module module)))
+
+;;; Decorators
+
+(defun js2-parse-decorators ()
+  "Parse decorators."
+  (let ((pos (js2-current-token-beg))
+        (continue t)
+        pn)
+    (setq pn (js2-parse-decorator))
+    (if (not (js2-match-token js2-CLASS))
+        (js2-report-error "msg.syntax")
+      (if (= (js2-peek-token) js2-NAME)
+          (js2-parse-class-stmt pn)     ; match @a class b {
+        (js2-parse-class-expr pn)))     ; match @a class {
+    ))
+
+(defun js2-parse-decorator ()
+  "Parse decorator."
+  (let ((pos (js2-current-token-beg))
+        expr)
+    (js2-parse-name (js2-get-token))))
 
 ;;; Use AST to extract semantic information
 
